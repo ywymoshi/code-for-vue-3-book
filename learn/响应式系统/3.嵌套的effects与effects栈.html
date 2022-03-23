@@ -1,0 +1,78 @@
+<body>
+     <div id="a"></div>
+     <div id="b"></div>
+</body>
+<script>
+
+    let activeEffect;
+    // 解决effcts嵌套问题
+    let effectStack = [];
+    function effect(fn){
+        const effectFn = function() {
+            // 优化
+            clean(effectFn)
+            activeEffect = effectFn;
+            effectStack.push(activeEffect)
+            fn()
+            effectStack.pop()
+            activeEffect = effectStack[effectStack.length - 1]
+        }
+        effectFn.deps = []
+        effectFn()
+    }
+    function clean(effectFn) {
+        for(let i = 0; i < effectFn.deps.length; i++) {
+            let deps = effectFn.deps[i]
+            deps.delete(effectFn)
+        }
+        effectFn.deps.length = 0
+    }
+    let baseObj = { foo: 'foo', bar: 'bar' };
+    let bunket = new WeakMap();
+    
+    let obj = new Proxy(baseObj, {
+        get(target, key) {
+            track(target, key)
+            return Reflect.get(target, key)
+        },
+        set(target, key, newVal) {
+            const flag = Reflect.set(target, key, newVal)
+            trigger(target, key, newVal)
+            return flag
+        }
+    })
+
+    function track(target, key) {
+            if(!activeEffect) return
+            let depsMap = bunket.get(target)
+            if(!depsMap) {
+                bunket.set(target, (depsMap = new Map()))
+            }
+            let deps = depsMap.get(key)
+            if(!deps) {
+                depsMap.set(key, (deps = new Set()))
+            }
+            deps.add(activeEffect)
+            activeEffect.deps.push(deps)
+    }
+
+    function trigger(target, key, newVal){
+        const depsMap = bunket.get(target)
+        if(!depsMap) return
+        const effects = depsMap.get(key)
+        // forEach便利set集合，如果将set中某个元素删除了，又重新添加了，那么会导致死循环，所以需要使用一个新的set进行遍历
+        let effectsToRun = new Set(effects)
+        effectsToRun && effectsToRun.forEach(effect => {
+            effect()
+        });
+    }
+    effect(function effectFn1() {
+        console.log("effectFn1执行")
+        effect(function effectFn2() {
+            console.log("effectFn2执行")
+            document.getElementById("b").innerText = obj.bar
+        })
+        document.getElementById("a").innerText = obj.foo
+    })
+    obj.foo = "foo修改"
+</script>

@@ -1,0 +1,148 @@
+<body>
+</body>
+<script>
+    // 避免递归执行
+    let activeEffect;
+    let effectStack = [];
+    function effect(fn, options = {}){
+        const effectFn = function() {
+            // 优化
+            clean(effectFn)
+            activeEffect = effectFn;
+            effectStack.push(activeEffect)
+            const res = fn()
+            effectStack.pop()
+            activeEffect = effectStack[effectStack.length - 1]
+            return res;
+        }
+        effectFn.options = options
+        effectFn.deps = []
+        if(!effectFn.options.lazy) {
+            effectFn()
+        }
+        return effectFn
+    }
+    function clean(effectFn) {
+        for(let i = 0; i < effectFn.deps.length; i++) {
+            let deps = effectFn.deps[i]
+            deps.delete(effectFn)
+        }
+        effectFn.deps.length = 0
+    }
+    let baseObj = { foo: 1, bar: 2 };
+    let bunket = new WeakMap();
+    
+    let obj = new Proxy(baseObj, {
+        get(target, key) {
+            track(target, key)
+            return Reflect.get(target, key)
+        },
+        set(target, key, newVal) {
+            const flag = Reflect.set(target, key, newVal)
+            trigger(target, key, newVal)
+            return flag
+        }
+    })
+
+    function track(target, key) {
+            if(!activeEffect) return
+            let depsMap = bunket.get(target)
+            if(!depsMap) {
+                bunket.set(target, (depsMap = new Map()))
+            }
+            let deps = depsMap.get(key)
+            if(!deps) {
+                depsMap.set(key, (deps = new Set()))
+            }
+            deps.add(activeEffect)
+            activeEffect.deps.push(deps)
+    }
+
+    function trigger(target, key, newVal){
+        const depsMap = bunket.get(target)
+        if(!depsMap) return
+        const effects = depsMap.get(key)
+        // forEach便利set集合，如果将set中某个元素删除了，又重新添加了，那么会导致死循环，所以需要使用一个新的set进行遍历
+        let effectsToRun = new Set(effects)
+        effectsToRun && effectsToRun.forEach(effect => {
+            // effect不等于当前的activeEffect 才执行，不然会导致死循环
+            if(effect === activeEffect) return 
+            if(effect.options.schedule && typeof effect.options.schedule === 'function') {
+                effect.options.schedule(effect)
+            } else {
+                effect()
+            }
+        });
+    }
+    
+    // 异步执行effect任务
+    let jobQueue = new Set()
+    let p = Promise.resolve()
+    let isFlushing = false;
+    function flushJob() {
+        if(isFlushing) {
+            return
+        }
+        isFlushing = true
+        p.then(()=> {
+            jobQueue.forEach(job => job())
+        }).finally(() => {
+            isFlushing = false
+        })
+    }
+    function watch(source, fn, options = {}) {
+        let getter
+        if(typeof source === 'function') {
+            getter = source
+        } else {
+            getter = () => traverse(source)
+        }
+        let cleanup
+        const onInvalidate = (fn) => {
+            cleanup = fn
+        }
+        const job = () => {
+            if(cleanup) {
+                cleanup()
+            }
+            newVal = effectFn();
+            fn(newVal, oldVal)
+            oldVal = newVal
+        }
+        let oldVal, newVal;
+        const effectFn = effect(() => getter(), {
+            lazy: true,
+            schedule() {
+                // 定义watch的执行时机， pre 组件更新前， post组件更新后
+                if(options.flush === 'post') {
+                    const p = Promise.resolve()
+                    p.then(job)
+                } else {
+                    // 同步执行
+                    job()
+                }
+            }
+        })
+        if(options.immediate) {
+            job()
+        }
+        oldVal = effectFn()
+    }
+    // seen 避免循环引用
+    function traverse(value, seen = new Set()) {
+        if(typeof value !== 'object' || typeof source == null || seen.has(value)) {
+            return
+        }
+        seen.add(value)
+        for(const k in value) {
+            traverse(k, seen)
+        }
+        return value
+    }
+    watch(obj, function(newVal, oldVal) {
+        console.log("数据发生改变了")
+    }, {
+        immediate: true
+    })
+    obj.foo++
+</script>

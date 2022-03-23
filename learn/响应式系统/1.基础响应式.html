@@ -1,0 +1,23 @@
+<body></body>
+<script>
+    let baseObj = { foo: 0 };
+    let bunket = new Set()
+    let obj = new Proxy(baseObj, {
+        get(target, key) {
+            bunket.add(effect)
+            return Reflect.get(target, key)
+        },
+        set(target, key, newVal) {
+            let flag = Reflect.set(target, key, newVal)
+            bunket.forEach(fn => {
+                fn()
+            })
+            return flag
+        }
+    })
+    function effect(){
+        document.body.innerText = obj.foo
+    }
+    effect()
+    obj.foo++;
+</script>
